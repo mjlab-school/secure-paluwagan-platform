@@ -2,11 +2,10 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { supabase } from '@/lib/supabaseClient';
 
 export default function Navbar() {
   const router = useRouter();
-  const supabase = createClientComponentClient();
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -24,6 +23,9 @@ export default function Navbar() {
         </Link>
         <Link href="/kyc" className="text-gray-600 hover:text-blue-600 font-medium">
           KYC Verification
+        </Link>
+        <Link href="/profile" className="text-gray-600 hover:text-blue-600 font-medium">
+          Profile & Batches
         </Link>
         <button
           onClick={handleSignOut}
