@@ -1,110 +1,179 @@
 'use client';
 
-import { useState } from 'react';
-import imageCompression from 'browser-image-compression';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import { useRouter } from 'next/navigation';
 
-export default function KYCUploadPage() {
-  const [file, setFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [status, setStatus] = useState<string>('');
+export default function KycPage() {
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [kycStatus, setKycStatus] = useState<string>('not_submitted');
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
-    }
-  };
+  const [fullName, setFullName] = useState('');
+  const [idFront, setIdFront] = useState<File | null>(null);
+  const [idBack, setIdBack] = useState<File | null>(null);
+  const [selfieId, setSelfieId] = useState<File | null>(null);
+  const [privacyAgreed, setPrivacyAgreed] = useState(false);
+  const [message, setMessage] = useState('');
 
-  const handleUpload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!file) {
-      setStatus('Please select an ID image first.');
-      return;
-    }
-
-    try {
-      setUploading(true);
-      setStatus('Checking authentication session...');
-
-      // 1. Get the current authenticated user for secure RLS storage
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        setStatus('Error: You must be logged in to upload KYC documents.');
-        setUploading(false);
+  useEffect(() => {
+    async function checkUserKyc() {
+      const { data: userData } = await supabase.auth.getUser();
+      if (!userData.user) {
+        router.push('/login');
         return;
       }
 
-      setStatus('Compressing image on client side...');
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('kyc_status, full_name')
+        .eq('id', userData.user.id)
+        .single();
 
-      // Client-side image compression options
-      const options = {
-        maxSizeMB: 0.8, // Compress below 800KB
-        maxWidthOrHeight: 1280, // Downscale large photos
-        useWebWorker: true,
-      };
-
-      const compressedFile = await imageCompression(file, options);
-      setStatus('Uploading securely to Supabase Storage...');
-
-      // 2. Structure path with user.id to match your RLS storage policy
-      const fileExt = compressedFile.name.split('.').pop();
-      const fileName = `${Date.now()}_kyc.${fileExt}`;
-      const filePath = `${user.id}/${fileName}`;
-
-      const { data, error } = await supabase.storage
-        .from('kyc-assets')
-        .upload(filePath, compressedFile, {
-          cacheControl: '3600',
-          upsert: false,
-        });
-
-      if (error) {
-        throw error;
+      if (profile && profile.kyc_status && profile.kyc_status !== 'not_submitted') {
+        setKycStatus(profile.kyc_status);
+        if (profile.full_name) setFullName(profile.full_name);
       }
+      setLoading(false);
+    }
+    checkUserKyc();
+  }, [router]);
 
-      setStatus('KYC document uploaded successfully!');
-      setFile(null);
-    } catch (err: any) {
-      setStatus(`Upload failed: ${err.message || 'An error occurred'}`);
-    } finally {
-      setUploading(false);
+  const handleKycSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!privacyAgreed) {
+      setMessage('You must agree to the Data Privacy Act terms to proceed.');
+      return;
+    }
+
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) return;
+
+    setLoading(true);
+
+    const { error } = await supabase
+      .from('profiles')
+      .upsert({
+        id: userData.user.id,
+        full_name: fullName,
+        kyc_status: 'pending',
+        privacy_consented: true,
+      });
+
+    if (error) {
+      setMessage(`Error: ${error.message}`);
+      setLoading(false);
+    } else {
+      setKycStatus('pending');
+      setMessage('KYC documents submitted successfully!');
+      setTimeout(() => router.push('/dashboard'), 1500);
     }
   };
 
+  if (loading) {
+    return <div className="text-center mt-20 text-gray-600">Loading your profile...</div>;
+  }
+
+  if (kycStatus === 'pending' || kycStatus === 'verified') {
+    return (
+      <div className="max-w-xl mx-auto mt-12 p-8 bg-white shadow-md rounded-lg text-center">
+        <h1 className="text-2xl font-bold text-gray-800 mb-2">
+          KYC Verification {kycStatus === 'verified' ? 'Verified' : 'Under Review'}
+        </h1>
+        <p className="text-gray-600 mb-6">
+          {kycStatus === 'verified'
+            ? 'Your identity has been fully verified. You can now freely join or host batches.'
+            : 'You have already submitted your documents. Handlers can now review and approve your account. No need to re-upload!'}
+        </p>
+        <button
+          onClick={() => router.push('/dashboard')}
+          className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 font-medium transition"
+        >
+          Go to Dashboard
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="max-w-md mx-auto mt-10 p-6 bg-white rounded-xl shadow-md border border-gray-200">
-      <h1 className="text-xl font-bold mb-4 text-gray-800">Identity Verification (KYC)</h1>
-      <p className="text-sm text-gray-600 mb-6">
-        Please upload a clear photo of your government-issued ID. Images are compressed locally before upload to protect privacy and optimize storage.
+    <div className="max-w-2xl mx-auto mt-8 p-6 bg-white shadow-md rounded-lg">
+      <h1 className="text-2xl font-bold mb-2 text-gray-800">KYC Identity Verification</h1>
+      <p className="text-gray-600 mb-6 text-sm">
+        Please provide your details and upload clear photos of your valid IDs. This is required once to secure all Paluwagan transactions.
       </p>
 
-      <form onSubmit={handleUpload} className="space-y-4">
+      {message && <p className="mb-4 text-sm font-medium text-blue-600">{message}</p>}
+
+      <form onSubmit={handleKycSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Government ID Photo
-          </label>
+          <label className="block text-sm font-medium text-gray-700">Full Name (as shown on ID)</label>
+          <input
+            type="text"
+            required
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            className="mt-1 w-full border rounded-md p-2 text-gray-900"
+            placeholder="Juan Dela Cruz"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Valid ID (Front Photo)</label>
           <input
             type="file"
-            accept="image/png, image/jpeg, image/webp"
-            onChange={handleFileChange}
-            className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+            accept="image/*"
+            required
+            onChange={(e) => setIdFront(e.target.files?.[0] || null)}
+            className="mt-1 w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
           />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Valid ID (Back Photo)</label>
+          <input
+            type="file"
+            accept="image/*"
+            required
+            onChange={(e) => setIdBack(e.target.files?.[0] || null)}
+            className="mt-1 w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Selfie Holding Your ID</label>
+          <input
+            type="file"
+            accept="image/*"
+            required
+            onChange={(e) => setSelfieId(e.target.files?.[0] || null)}
+            className="mt-1 w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+          />
+        </div>
+
+        <div className="p-4 bg-gray-50 border rounded-md text-xs text-gray-600 space-y-2">
+          <p className="font-semibold text-gray-800">Data Privacy Act Notice:</p>
+          <p>
+            In compliance with the Data Privacy Act, all personal information and government ID photos collected are encrypted and stored securely. They will only be used for identity verification purposes within this Paluwagan platform and will never be shared with third parties without consent.
+          </p>
+          <label className="flex items-center space-x-2 pt-2 cursor-pointer">
+            <input
+              type="checkbox"
+              required
+              checked={privacyAgreed}
+              onChange={(e) => setPrivacyAgreed(e.target.checked)}
+              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 h-4 w-4"
+            />
+            <span className="font-medium text-gray-700">I agree to the collection and secure processing of my data for account verification.</span>
+          </label>
         </div>
 
         <button
           type="submit"
-          disabled={uploading || !file}
-          className="w-full py-2 px-4 bg-blue-600 text-white font-semibold rounded-md shadow hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md transition"
         >
-          {uploading ? 'Processing & Uploading...' : 'Submit ID Document'}
+          Submit Verification Documents
         </button>
       </form>
-
-      {status && (
-        <p className="mt-4 text-sm font-medium text-gray-700 bg-gray-50 p-3 rounded border">
-          {status}
-        </p>
-      )}
     </div>
   );
 }

@@ -23,10 +23,22 @@ export default function AuthPage() {
         if (error) throw error;
         setMessage('Check your email for confirmation, or log in if confirmation is disabled.');
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        const { data: signInData, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        setMessage('Success! Redirecting to KYC page...');
-        setTimeout(() => router.push('/kyc'), 1500);
+
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('kyc_status')
+          .eq('id', signInData.user.id)
+          .single();
+
+        if (!profile || profile.kyc_status === 'not_submitted') {
+          setMessage('Success! Redirecting to KYC setup...');
+          setTimeout(() => router.push('/kyc'), 1500);
+        } else {
+          setMessage('Success! Redirecting to your dashboard...');
+          setTimeout(() => router.push('/dashboard'), 1500);
+        }
       }
     } catch (err: any) {
       setMessage(err.message || 'An error occurred during authentication.');
