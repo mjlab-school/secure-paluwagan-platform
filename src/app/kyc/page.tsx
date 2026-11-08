@@ -24,6 +24,16 @@ export default function KYCUploadPage() {
 
     try {
       setUploading(true);
+      setStatus('Checking authentication session...');
+
+      // 1. Get the current authenticated user for secure RLS storage
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        setStatus('Error: You must be logged in to upload KYC documents.');
+        setUploading(false);
+        return;
+      }
+
       setStatus('Compressing image on client side...');
 
       // Client-side image compression options
@@ -36,10 +46,10 @@ export default function KYCUploadPage() {
       const compressedFile = await imageCompression(file, options);
       setStatus('Uploading securely to Supabase Storage...');
 
-      // Generate a unique file path for the authenticated user
+      // 2. Structure path with user.id to match your RLS storage policy
       const fileExt = compressedFile.name.split('.').pop();
       const fileName = `${Date.now()}_kyc.${fileExt}`;
-      const filePath = `kyc-documents/${fileName}`;
+      const filePath = `${user.id}/${fileName}`;
 
       const { data, error } = await supabase.storage
         .from('kyc-assets')
